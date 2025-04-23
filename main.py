@@ -88,7 +88,7 @@ def random_hesap(message):
         bot.send_message(message.chat.id, "Bugün zaten bir random hesap aldın. Yarın tekrar deneyebilirsin.")
         return
 
-    if users[user_id]["ref"] < 3:
+    if users[user_id]["ref"] < 0:
         bot.send_message(message.chat.id, "Yeterli referansın yok. 3 referans gereklidir.")
         return
 
