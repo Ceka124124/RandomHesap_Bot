@@ -1,0 +1,127 @@
+
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import json
+import random
+
+BOT_TOKEN = '7365810160:AAF37qXcW7K0gp7GfdI5JoCSDKOtK72cuTg'
+KANAL1 = "@TeazerEnginee"
+KANAL2 = "@Teazerss"
+bot = telebot.TeleBot(BOT_TOKEN)
+
+def load_data():
+    try:
+        with open("users.json", "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_data(data):
+    with open("users.json", "w") as f:
+        json.dump(data, f)
+
+users = load_data()
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = str(message.from_user.id)
+
+    if user_id not in users:
+        users[user_id] = {"ref": 0, "verified": False}
+        save_data(users)
+
+    # referans kontrolü
+    if message.text.startswith("/start="):
+        ref_id = message.text.split("=")[1]
+        if ref_id != user_id and ref_id in users:
+            users[ref_id]["ref"] += 1
+            save_data(users)
+
+    # eğer daha önce doğrulanmışsa, komutları gönder
+    if users[user_id].get("verified"):
+        bot.send_message(message.chat.id, "**Komutlar:**\n/referans\n/hesap\n/siralama", parse_mode="Markdown")
+    else:
+        # önce kanal kontrolünü yapalım
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Kanal 1", url="https://t.me/TeazerEnginee"))
+        markup.add(InlineKeyboardButton("Kanal 2", url="https://t.me/Teazerss"))
+        markup.add(InlineKeyboardButton("Kontrol Et", callback_data="check"))
+        bot.send_message(message.chat.id, "Başlamadan önce iki kanala katılmalısın:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "check")
+def check(call):
+    uid = str(call.from_user.id)
+    try:
+        in1 = bot.get_chat_member(KANAL1, int(uid)).status in ["member", "administrator", "creator"]
+        in2 = bot.get_chat_member(KANAL2, int(uid)).status in ["member", "administrator", "creator"]
+    except Exception as e:
+        bot.answer_callback_query(call.id, "Bir hata oluştu, bot kanallarda admin mi?")
+        return
+
+    if in1 and in2:
+        users[uid]["verified"] = True
+        save_data(users)
+        bot.send_message(call.message.chat.id, "**Teşekkürler! Başladın!**\n\nKomutlar:\n/referans\n/hesap\n/siralama", parse_mode="Markdown")
+    else:
+        bot.send_message(call.message.chat.id, "Lütfen iki kanala da katıldığından emin ol.")
+
+@bot.message_handler(commands=["referans"])
+def referans(message):
+    user_id = str(message.from_user.id)
+    ref_count = users.get(user_id, {}).get("ref", 0)
+    ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
+    msg = f"Referansım:\n{ref_link}\n\nReferansla Katılan: {ref_count} kişi"
+    bot.send_message(message.chat.id, msg)
+
+@bot.message_handler(commands=["hesap"])
+def hesap(message):
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("1 Random(3ref)", callback_data="hesap_3"),
+        InlineKeyboardButton("1 Garanti (10 ref)", callback_data="hesap_10")
+    )
+    bot.send_message(message.chat.id, "Birini seç:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("hesap_"))
+def hesap_ver(call):
+    user_id = str(call.from_user.id)
+    ref_required = int(call.data.split("_")[1])
+    if users[user_id]["ref"] < ref_required:
+        bot.answer_callback_query(call.id, "Yeterli referans yok.")
+        return
+
+    users[user_id]["ref"] -= ref_required
+    save_data(users)
+
+    with open("hesaplar.txt", "r") as f:
+        lines = f.readlines()
+
+    if not lines:
+        bot.send_message(call.message.chat.id, "Hesap kalmadı.")
+        return
+
+    line = random.choice(lines) if ref_required != 10 else lines[0]
+    parts = line.strip().split(":")
+    email, password, name = parts[0], parts[1], parts[2]
+    lines.remove(line)
+
+    with open("hesaplar.txt", "w") as f:
+        f.writelines(lines)
+
+    msg = f"**Email:** {email}\n**Şifre:** {password}\n**İsim:** {name}"
+    bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=["siralama"])
+def siralama(message):
+    sorted_users = sorted(users.items(), key=lambda x: x[1]["ref"], reverse=True)
+    msg = ""
+    for i, (uid, data) in enumerate(sorted_users[:10], start=1):
+        try:
+            user = bot.get_chat(uid)
+            name = user.username or user.first_name
+        except:
+            name = f"ID:{uid}"
+        msg += f"{i}. {name} - {data['ref']} ref\n"
+    bot.send_message(message.chat.id, msg)
+
+bot.infinity_polling()
