@@ -1,8 +1,8 @@
-
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import json
 import random
+from datetime import datetime
 
 BOT_TOKEN = '7365810160:AAF37qXcW7K0gp7GfdI5JoCSDKOtK72cuTg'
 KANAL1 = "@TeazerEnginee"
@@ -23,12 +23,26 @@ def save_data(data):
 
 users = load_data()
 
+def check_daily(user_id):
+    """ Kullanıcının günlük hesap alıp almadığını kontrol et """
+    today = datetime.today().date()
+    last_request_date = users[user_id].get("last_random_date")
+    if last_request_date == str(today):
+        return False  # Aynı gün içinde tekrar alınamaz
+    return True
+
+def update_last_request_date(user_id):
+    """ Kullanıcının son hesap alma tarihini güncelle """
+    today = datetime.today().date()
+    users[user_id]["last_random_date"] = str(today)
+    save_data(users)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = str(message.from_user.id)
 
     if user_id not in users:
-        users[user_id] = {"ref": 0, "verified": False}
+        users[user_id] = {"ref": 0, "verified": False, "last_random_date": None}
         save_data(users)
 
     # referans kontrolü
@@ -40,7 +54,7 @@ def start(message):
 
     # eğer daha önce doğrulanmışsa, komutları gönder
     if users[user_id].get("verified"):
-        bot.send_message(message.chat.id, "**Komutlar:**\n/referans\n/hesap\n/siralama", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "**Komutlar:**\n/referans\n/hesap\n/siralama\n/random", parse_mode="Markdown")
     else:
         # önce kanal kontrolünü yapalım
         markup = InlineKeyboardMarkup()
@@ -48,23 +62,6 @@ def start(message):
         markup.add(InlineKeyboardButton("Kanal 2", url="https://t.me/Teazerss"))
         markup.add(InlineKeyboardButton("Kontrol Et", callback_data="check"))
         bot.send_message(message.chat.id, "Başlamadan önce iki kanala katılmalısın:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data == "check")
-def check(call):
-    uid = str(call.from_user.id)
-    try:
-        in1 = bot.get_chat_member(KANAL1, int(uid)).status in ["member", "administrator", "creator"]
-        in2 = bot.get_chat_member(KANAL2, int(uid)).status in ["member", "administrator", "creator"]
-    except Exception as e:
-        bot.answer_callback_query(call.id, "Bir hata oluştu, bot kanallarda admin mi?")
-        return
-
-    if in1 and in2:
-        users[uid]["verified"] = True
-        save_data(users)
-        bot.send_message(call.message.chat.id, "**Teşekkürler! Başladın!**\n\nKomutlar:\n/referans\n/hesap\n/siralama", parse_mode="Markdown")
-    else:
-        bot.send_message(call.message.chat.id, "Lütfen iki kanala da katıldığından emin ol.")
 
 @bot.message_handler(commands=["referans"])
 def referans(message):
@@ -78,10 +75,46 @@ def referans(message):
 def hesap(message):
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("1 Random(3ref)", callback_data="hesap_3"),
+        InlineKeyboardButton("1 Random (3ref)", callback_data="hesap_3"),
         InlineKeyboardButton("1 Garanti (10 ref)", callback_data="hesap_10")
     )
     bot.send_message(message.chat.id, "Birini seç:", reply_markup=markup)
+
+@bot.message_handler(commands=["random"])
+def random_hesap(message):
+    user_id = str(message.from_user.id)
+    
+    if not check_daily(user_id):
+        bot.send_message(message.chat.id, "Bugün zaten bir random hesap aldın. Yarın tekrar deneyebilirsin.")
+        return
+
+    if users[user_id]["ref"] < 3:
+        bot.send_message(message.chat.id, "Yeterli referansın yok. 3 referans gereklidir.")
+        return
+
+    # Random hesap al
+    with open("hesaplar.txt", "r") as f:
+        lines = f.readlines()
+
+    if not lines:
+        bot.send_message(message.chat.id, "Hesap kalmadı.")
+        return
+
+    line = random.choice(lines)
+    parts = line.strip().split(":")
+    email, password, name = parts[0], parts[1], parts[2]
+    lines.remove(line)
+
+    with open("hesaplar.txt", "w") as f:
+        f.writelines(lines)
+
+    msg = f"**Email:** {email}\n**Şifre:** {password}\n**İsim:** {name}"
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+    # Güncel tarihte hesap alındığını kaydet
+    users[user_id]["ref"] -= 3
+    update_last_request_date(user_id)
+    save_data(users)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("hesap_"))
 def hesap_ver(call):
@@ -94,23 +127,42 @@ def hesap_ver(call):
     users[user_id]["ref"] -= ref_required
     save_data(users)
 
-    with open("hesaplar.txt", "r") as f:
-        lines = f.readlines()
+    if ref_required == 10:
+        with open("garanti.txt", "r") as f:
+            lines = f.readlines()
 
-    if not lines:
-        bot.send_message(call.message.chat.id, "Hesap kalmadı.")
-        return
+        if not lines:
+            bot.send_message(call.message.chat.id, "Garanti hesap kalmadı.")
+            return
 
-    line = random.choice(lines) if ref_required != 10 else lines[0]
-    parts = line.strip().split(":")
-    email, password, name = parts[0], parts[1], parts[2]
-    lines.remove(line)
+        line = lines[0]
+        parts = line.strip().split(":")
+        email, password, name = parts[0], parts[1], parts[2]
+        lines.remove(line)
 
-    with open("hesaplar.txt", "w") as f:
-        f.writelines(lines)
+        with open("garanti.txt", "w") as f:
+            f.writelines(lines)
 
-    msg = f"**Email:** {email}\n**Şifre:** {password}\n**İsim:** {name}"
-    bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+        msg = f"**Email:** {email}\n**Şifre:** {password}\n**İsim:** {name}"
+        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+    else:
+        with open("hesaplar.txt", "r") as f:
+            lines = f.readlines()
+
+        if not lines:
+            bot.send_message(call.message.chat.id, "Hesap kalmadı.")
+            return
+
+        line = random.choice(lines) if ref_required != 10 else lines[0]
+        parts = line.strip().split(":")
+        email, password, name = parts[0], parts[1], parts[2]
+        lines.remove(line)
+
+        with open("hesaplar.txt", "w") as f:
+            f.writelines(lines)
+
+        msg = f"**Email:** {email}\n**Şifre:** {password}\n**İsim:** {name}"
+        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
 @bot.message_handler(commands=["siralama"])
 def siralama(message):
