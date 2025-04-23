@@ -8,6 +8,7 @@ BOT_TOKEN = '7365810160:AAF37qXcW7K0gp7GfdI5JoCSDKOtK72cuTg'
 KANAL1 = "@TeazerEnginee"
 KANAL2 = "@Teazerss"
 bot = telebot.TeleBot(BOT_TOKEN)
+bot.remove_webhook()
 
 def load_data():
     try:
